@@ -7,6 +7,7 @@ using CounterStrikeSharp.API.Modules.Menu;
 using CounterStrikeSharp.API.Modules.Utils;
 using CounterStrikeSharp.API.Modules.Admin;
 using System.Text.Json;
+using MySqlConnector;
 using Microsoft.Data.Sqlite;
 using System.Text.Json.Serialization;
 
@@ -15,8 +16,23 @@ namespace FranugAgentsChooser;
 public class ConfigGen : BasePluginConfig
 {
     [JsonPropertyName("AccessFlag")] public string AccessFlag { get; set; } = "";
-    [JsonPropertyName("CtAgents")] public int CtAgents { get; set; } = 3;
-    [JsonPropertyName("TtAgents")] public int TtAgents { get; set; } = 3;
+    [JsonPropertyName("UsableTeam")] public int UsableTeam { get; set; } = 3;
+    [JsonPropertyName("DatabaseType")]
+    public string DatabaseType { get; set; } = "SQLite";
+    [JsonPropertyName("DatabaseFilePath")]
+    public string DatabaseFilePath { get; set; } = "/csgo/addons/counterstrikesharp/plugins/FranugAgentsChooser/franug-agentschooser-db.sqlite";
+    [JsonPropertyName("DatabaseHost")]
+    public string DatabaseHost { get; set; } = "";
+    [JsonPropertyName("DatabasePort")]
+    public int DatabasePort { get; set; }
+    [JsonPropertyName("DatabaseUser")]
+    public string DatabaseUser { get; set; } = "";
+    [JsonPropertyName("DatabasePassword")]
+    public string DatabasePassword { get; set; } = "";
+    [JsonPropertyName("DatabaseName")]
+    public string DatabaseName { get; set; } = "";
+    [JsonPropertyName("Comment")]
+    public string Comment { get; set; } = "Use SQLite or MySQL as Database Type. Usable team: 3 = both, 2 = only CTs, 1 = only TTs";
 }
 
 
@@ -25,13 +41,14 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
 {
     public override string ModuleName => "Franug Agents Chooser";
     public override string ModuleAuthor => "Franc1sco Franug";
-    public override string ModuleVersion => "0.0.3";
+    public override string ModuleVersion => "0.0.4";
     public ConfigGen Config { get; set; } = null!;
     public void OnConfigParsed(ConfigGen config) { Config = config; }
 
     private string TAG = $" {ChatColors.Lime}[AgentsChooser]{ChatColors.Green} ";
 
     private SqliteConnection? connectionSQLITE = null;
+    private MySqlConnection? connectionMySQL = null;
     internal static Dictionary<int, AgentsInfo> gAgentsInfo = new Dictionary<int, AgentsInfo>();
 
     internal static readonly Dictionary<string, string> agentsListCT = new()
@@ -117,12 +134,12 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
 
     public override void Load(bool hotReload)
     {
-        CreateTableSQLite();
+        createDB();
         if (hotReload)
         {
             Utilities.GetPlayers().ForEach(player =>
             {
-                _ = GetUserDataSQLite(player);
+                getPlayerData(player);
             });
         }
 
@@ -137,7 +154,7 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
             }
             else
             {
-                _ = GetUserDataSQLite(player);
+                getPlayerData(player);
                 return HookResult.Continue;
             }
         });
@@ -181,18 +198,14 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
         }
 
         var menu = new CenterHtmlMenu("Agents Menu");
-        if ((Config.CtAgents == 1 && player.TeamNum == ((int)CsTeam.CounterTerrorist)) ||
-            (Config.CtAgents == 2 && player.TeamNum == ((int)CsTeam.Terrorist)) || 
-                Config.CtAgents == 3)
+        if (Config.UsableTeam == 2 || Config.UsableTeam == 3)
         {
             menu.AddMenuOption("CT Agents", (player, option) => {
                 setupCTMenu(player);
             });
         }
 
-        if ((Config.TtAgents == 1 && player.TeamNum == ((int)CsTeam.CounterTerrorist)) ||
-            (Config.TtAgents == 2 && player.TeamNum == ((int)CsTeam.Terrorist)) ||
-                Config.TtAgents == 3)
+        if (Config.UsableTeam == 1 || Config.UsableTeam == 3) 
         {
             menu.AddMenuOption("TT Agents", (player, option) => {
                 setupTTMenu(player);
@@ -293,21 +306,47 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
         return HookResult.Continue;
     }
 
-    private void updatePlayer(CCSPlayerController player)
+    private void createDB()
     {
-        if (RecordExistsSQLite(player))
+        if (Config.DatabaseType != "MySQL")
         {
-            _ = UpdateQueryDataSQLite(player);
+            CreateTableSQLite();
         }
         else
         {
-            _ = InsertQueryDataSQLite(player);
+            CreateTableMySQL();
+        }
+    }
+
+    private void updatePlayer(CCSPlayerController player)
+    {
+        if (Config.DatabaseType != "MySQL")
+        {
+            if (RecordExistsSQLite(player))
+            {
+                _ = UpdateQueryDataSQLite(player);
+            }
+            else
+            {
+                _ = InsertQueryDataSQLite(player);
+            }
+        }
+        else
+        {
+            if (RecordExistsMySQL(player))
+            {
+                _ = UpdateQueryDataMySQL(player);
+            }
+            else
+            {
+                _ = InsertQueryDataMySQL(player);
+            }
         }
     }
 
     private void CreateTableSQLite()
     {
-        string dbFilePath = Server.GameDirectory + "/csgo/addons/counterstrikesharp/plugins/FranugAgentsChooser/franug-agentschooser-db.sqlite";
+        string dbFilePath = Server.GameDirectory + Config.DatabaseFilePath;
 
         var connectionString = $"Data Source={dbFilePath};";
 
@@ -315,13 +354,41 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
 
         connectionSQLITE.Open();
 
-        var query = "CREATE TABLE IF NOT EXISTS franug_agents (steamid varchar(32) NOT NULL, agent_ct varchar(64), agent_tt varchar(64));";
+        var query = "CREATE TABLE IF NOT EXISTS franug_agents (steamid varchar(64) NOT NULL, agent_ct varchar(64), agent_tt varchar(64));";
 
         using (SqliteCommand command = new SqliteCommand(query, connectionSQLITE))
         {
             command.ExecuteNonQuery();
         }
         connectionSQLITE.Close();
+    }
+
+    private void CreateTableMySQL()
+    {
+        var connectionString = $"Server={Config.DatabaseHost};Database={Config.DatabaseName};User Id={Config.DatabaseUser};Password={Config.DatabasePassword};";
+
+        connectionMySQL = new MySqlConnection(connectionString);
+        connectionMySQL.Open();
+
+        using (MySqlCommand command = new MySqlCommand("CREATE TABLE IF NOT EXISTS `franug_agents` (`steamid` varchar(64) NOT NULL, agent_ct varchar(64) NOT NULL, agent_tt varchar(64) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;",
+            connectionMySQL))
+        {
+            command.ExecuteNonQuery();
+        }
+
+        connectionMySQL.Close();
+    }
+
+    private void getPlayerData(CCSPlayerController player)
+    {
+        if (Config.DatabaseType != "MySQL")
+        {
+            _ = GetUserDataSQLite(player);
+        }
+        else
+        {
+            _ = GetUserDataMySQL(player);
+        }
     }
 
     private bool RecordExistsSQLite(CCSPlayerController player)
@@ -346,7 +413,35 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[Franug-WeaponPaints] RecordExistsSQLite ******* An error occurred: {ex.Message}");
+            Console.WriteLine($"[Franug-AgentsChooser] RecordExistsSQLite ******* An error occurred: {ex.Message}");
+
+            return false;
+        }
+    }
+
+    private bool RecordExistsMySQL(CCSPlayerController player)
+    {
+        try
+        {
+            connectionMySQL.Open();
+
+            var query = "SELECT * FROM franug_agents WHERE steamid = @steamid;";
+            var command = new MySqlCommand(query, connectionMySQL);
+            command.Parameters.AddWithValue("@steamid", player.SteamID);
+
+            var reader = command.ExecuteReader();
+            var exists = false;
+            if (reader.Read())
+            {
+                exists = true;
+            }
+
+            connectionSQLITE.Close();
+            return exists;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Franug-AgentsChooser] RecordExistsMySQL ******* An error occurred: {ex.Message}");
 
             return false;
         }
@@ -382,7 +477,7 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[Franug-WeaponPaints] InsertQueryDataSQLite ******* An error occurred: {ex.Message}");
+            Console.WriteLine($"[Franug-AgentsChooser] InsertQueryDataSQLite ******* An error occurred: {ex.Message}");
         }
         finally
         {
@@ -420,11 +515,88 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[Franug-WeaponPaints] UpdateQueryDataSQLite ******* An error occurred: {ex.Message}");
+            Console.WriteLine($"[Franug-AgentsChooser] UpdateQueryDataSQLite ******* An error occurred: {ex.Message}");
         }
         finally
         {
             await connectionSQLITE?.CloseAsync();
+        }
+    }
+
+    public async Task InsertQueryDataMySQL(CCSPlayerController player)
+    {
+        try
+        {
+            var agent_ct = gAgentsInfo[(int)player.Index].AgentCT;
+            if (agent_ct == null)
+            {
+                agent_ct = "none";
+            }
+
+            var agent_tt = gAgentsInfo[(int)player.Index].AgentTT;
+            if (agent_tt == null)
+            {
+                agent_tt = "none";
+            }
+
+            await connectionMySQL.OpenAsync();
+
+            var query = "INSERT INTO franug_agents (steamid, agent_ct, agent_tt) VALUES (@steamid, @agent_ct, @agent_tt);";
+            var command = new MySqlCommand(query, connectionMySQL);
+
+            command.Parameters.AddWithValue("@steamid", player.SteamID);
+            command.Parameters.AddWithValue("@agent_ct", agent_ct);
+            command.Parameters.AddWithValue("@agent_tt", agent_tt);
+
+
+            await command.ExecuteNonQueryAsync();
+            connectionMySQL?.Close();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Franug-AgentsChooser] InsertQueryDataMySQL ******* An error occurred: {ex.Message}");
+        }
+        finally
+        {
+            await connectionMySQL?.CloseAsync();
+        }
+    }
+
+    public async Task UpdateQueryDataMySQL(CCSPlayerController player)
+    {
+        try
+        {
+            var agent_ct = gAgentsInfo[(int)player.Index].AgentCT;
+            if (agent_ct == null)
+            {
+                agent_ct = "none";
+            }
+
+            var agent_tt = gAgentsInfo[(int)player.Index].AgentTT;
+            if (agent_tt == null)
+            {
+                agent_tt = "none";
+            }
+
+            await connectionMySQL.OpenAsync();
+
+            var query = "UPDATE franug_agents SET agent_ct = @agent_ct, agent_tt = @agent_tt WHERE steamid = @steamid;";
+            var command = new MySqlCommand(query, connectionMySQL);
+
+            command.Parameters.AddWithValue("@steamid", player.SteamID);
+            command.Parameters.AddWithValue("@agent_ct", agent_ct);
+            command.Parameters.AddWithValue("@agent_tt", agent_tt);
+
+            await command.ExecuteNonQueryAsync();
+            connectionMySQL?.Close();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Franug-AgentsChooser] UpdateQueryDataMySQL ******* An error occurred: {ex.Message}");
+        }
+        finally
+        {
+            await connectionMySQL?.CloseAsync();
         }
     }
 
@@ -465,11 +637,56 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[Franug-WeaponPaints] GetUserDataSQLite ******* An error occurred: {ex.Message}");
+            Console.WriteLine($"[Franug-AgentsChooser] GetUserDataSQLite ******* An error occurred: {ex.Message}");
         }
         finally
         {
             await connectionSQLITE?.CloseAsync();
+        }
+    }
+
+    public async Task GetUserDataMySQL(CCSPlayerController player)
+    {
+        try
+        {
+            await connectionMySQL.OpenAsync();
+
+            var query = "SELECT * FROM franug_agents WHERE steamid = @steamid;";
+
+            var command = new MySqlCommand(query, connectionMySQL);
+            command.Parameters.AddWithValue("@steamid", player.SteamID);
+            var reader = await command.ExecuteReaderAsync();
+            if (await reader.ReadAsync())
+            {
+                var agent_ct = Convert.ToString(reader["agent_ct"]);
+                var agent_tt = Convert.ToString(reader["agent_tt"]);
+
+                AgentsInfo agentsInfo = new AgentsInfo
+                {
+                    AgentCT = agent_ct,
+                    AgentTT = agent_tt,
+                };
+
+                gAgentsInfo[(int)player.Index] = agentsInfo;
+            }
+            else
+            {
+                AgentsInfo agentsInfo = new AgentsInfo
+                {
+                    AgentCT = null,
+                    AgentTT = null,
+                };
+
+                gAgentsInfo[(int)player.Index] = agentsInfo;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Franug-AgentsChooser] GetUserDataMySQL ******* An error occurred: {ex.Message}");
+        }
+        finally
+        {
+            await connectionMySQL?.CloseAsync();
         }
     }
 
