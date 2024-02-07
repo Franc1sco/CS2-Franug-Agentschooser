@@ -6,7 +6,6 @@ using CounterStrikeSharp.API.Modules.Commands;
 using CounterStrikeSharp.API.Modules.Menu;
 using CounterStrikeSharp.API.Modules.Utils;
 using CounterStrikeSharp.API.Modules.Admin;
-using System.Text.Json;
 using MySqlConnector;
 using Microsoft.Data.Sqlite;
 using System.Text.Json.Serialization;
@@ -33,6 +32,8 @@ public class ConfigGen : BasePluginConfig
     public string DatabaseName { get; set; } = "";
     [JsonPropertyName("Comment")]
     public string Comment { get; set; } = "Use SQLite or MySQL as Database Type. Usable team: 3 = both, 2 = only CTs, 1 = only TTs";
+    [JsonPropertyName("DebugEnabled")] public bool DebugEnabled { get; set; } = true;
+    [JsonPropertyName("ChatTag")] public string ChatTag { get; set; } = $" {ChatColors.Lime}[AgentsChooser]{ChatColors.Green} ";
 }
 
 
@@ -41,14 +42,12 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
 {
     public override string ModuleName => "Franug Agents Chooser";
     public override string ModuleAuthor => "Franc1sco Franug";
-    public override string ModuleVersion => "0.0.4";
+    public override string ModuleVersion => "0.0.5dev";
     public ConfigGen Config { get; set; } = null!;
     public void OnConfigParsed(ConfigGen config) { Config = config; }
 
-    private string TAG = $" {ChatColors.Lime}[AgentsChooser]{ChatColors.Green} ";
-
     private SqliteConnection? connectionSQLITE = null;
-    private MySqlConnection? connectionMySQL = null;
+    internal static MySqlConnection? connectionMySQL = null;
     internal static Dictionary<int, AgentsInfo> gAgentsInfo = new Dictionary<int, AgentsInfo>();
 
     internal static readonly Dictionary<string, string> agentsListCT = new()
@@ -193,7 +192,7 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
 
         if (Config.AccessFlag != "" && !AdminManager.PlayerHasPermissions(player, Config.AccessFlag))
         {
-            player.PrintToChat(TAG + $"You dont have access to this command.");
+            player.PrintToChat(Config.ChatTag + $"You dont have access to this command.");
             return;
         }
 
@@ -221,7 +220,7 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
         menu.AddMenuOption("No agent model", (player, option) => {
 
             gAgentsInfo[(int)player.Index].AgentCT = "none";
-            player.PrintToChat(TAG + $"Set agent model to {ChatColors.Lime}" + "none" + $" {ChatColors.Green}on your next spawn");
+            player.PrintToChat(Config.ChatTag + $"Set agent model to {ChatColors.Lime}" + "none" + $" {ChatColors.Green}on your next spawn");
             updatePlayer(player);
         });
         foreach (var agent in agentsListCT)
@@ -229,7 +228,7 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
             menu.AddMenuOption(agent.Value, (player, option) => {
 
                 gAgentsInfo[(int)player.Index].AgentCT = agent.Key;
-                player.PrintToChat(TAG + $"Set agent model to {ChatColors.Lime}" + agent.Value);
+                player.PrintToChat(Config.ChatTag + $"Set agent model to {ChatColors.Lime}" + agent.Value);
                 if (IsValidClient(player) && (CsTeam)player.TeamNum == CsTeam.CounterTerrorist)
                 {
                     player.PlayerPawn.Value.SetModel(gAgentsInfo[(int)player.Index].AgentCT);
@@ -247,7 +246,7 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
         menu.AddMenuOption("No agent model", (player, option) => {
 
             gAgentsInfo[(int)player.Index].AgentTT = "none";
-            player.PrintToChat(TAG + $"Set agent model to {ChatColors.Lime}" + "none" + $" {ChatColors.Green}on your next spawn");
+            player.PrintToChat(Config.ChatTag + $"Set agent model to {ChatColors.Lime}" + "none" + $" {ChatColors.Green}on your next spawn");
             updatePlayer(player);
         });
         foreach (var agent in agentsListTT)
@@ -255,7 +254,7 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
             menu.AddMenuOption(agent.Value, (player, option) => {
 
                 gAgentsInfo[(int)player.Index].AgentTT = agent.Key;
-                player.PrintToChat(TAG + $"Set agent model to {ChatColors.Lime}" + agent.Value);
+                player.PrintToChat(Config.ChatTag + $"Set agent model to {ChatColors.Lime}" + agent.Value);
                 if (IsValidClient(player) && (CsTeam)player.TeamNum == CsTeam.Terrorist)
                 {
                     player.PlayerPawn.Value.SetModel(gAgentsInfo[(int)player.Index].AgentTT);
@@ -322,7 +321,7 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
     {
         if (Config.DatabaseType != "MySQL")
         {
-            if (RecordExistsSQLite(player))
+            if (RecordExists(player))
             {
                 _ = UpdateQueryDataSQLite(player);
             }
@@ -333,7 +332,7 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
         }
         else
         {
-            if (RecordExistsMySQL(player))
+            if (RecordExists(player))
             {
                 _ = UpdateQueryDataMySQL(player);
             }
@@ -355,6 +354,8 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
         connectionSQLITE.Open();
 
         var query = "CREATE TABLE IF NOT EXISTS franug_agents (steamid varchar(64) NOT NULL, agent_ct varchar(64), agent_tt varchar(64));";
+
+        if (Config.DebugEnabled) Console.WriteLine("QUERY: " + query);
 
         using (SqliteCommand command = new SqliteCommand(query, connectionSQLITE))
         {
@@ -391,76 +392,23 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
         }
     }
 
-    private bool RecordExistsSQLite(CCSPlayerController player)
+    private bool RecordExists(CCSPlayerController player)
     {
-        try
-        {
-            connectionSQLITE.Open();
-
-            var query = "SELECT * FROM franug_agents WHERE steamid = @steamid;";
-            var command = new SqliteCommand(query, connectionSQLITE);
-            command.Parameters.AddWithValue("@steamid", player.SteamID);
-
-            var reader = command.ExecuteReader();
-            var exists = false;
-            if (reader.Read())
-            {
-                exists = true;
-            }
-
-            connectionSQLITE.Close();
-            return exists;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[Franug-AgentsChooser] RecordExistsSQLite ******* An error occurred: {ex.Message}");
-
-            return false;
-        }
-    }
-
-    private bool RecordExistsMySQL(CCSPlayerController player)
-    {
-        try
-        {
-            connectionMySQL.Open();
-
-            var query = "SELECT * FROM franug_agents WHERE steamid = @steamid;";
-            var command = new MySqlCommand(query, connectionMySQL);
-            command.Parameters.AddWithValue("@steamid", player.SteamID);
-
-            var reader = command.ExecuteReader();
-            var exists = false;
-            if (reader.Read())
-            {
-                exists = true;
-            }
-
-            connectionSQLITE.Close();
-            return exists;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[Franug-AgentsChooser] RecordExistsMySQL ******* An error occurred: {ex.Message}");
-
-            return false;
-        }
+        return gAgentsInfo[(int)player.Index].AgentCT != null || gAgentsInfo[(int)player.Index].AgentTT != null;
     }
 
     public async Task InsertQueryDataSQLite(CCSPlayerController player)
     {
         try
         {
-            var agent_ct = gAgentsInfo[(int)player.Index].AgentCT;
-            if (agent_ct == null)
+            if (gAgentsInfo[(int)player.Index].AgentCT == null)
             {
-                agent_ct = "none";
+                gAgentsInfo[(int)player.Index].AgentCT = "none";
             }
 
-            var agent_tt = gAgentsInfo[(int)player.Index].AgentTT;
-            if (agent_tt == null)
+            if (gAgentsInfo[(int)player.Index].AgentTT == null)
             {
-                agent_tt = "none";
+                gAgentsInfo[(int)player.Index].AgentTT = "none";
             }
 
             await connectionSQLITE.OpenAsync();
@@ -469,9 +417,9 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
             var command = new SqliteCommand(query, connectionSQLITE);
 
             command.Parameters.AddWithValue("@steamid", player.SteamID);
-            command.Parameters.AddWithValue("@agent_ct", agent_ct);
-            command.Parameters.AddWithValue("@agent_tt", agent_tt);
-
+            command.Parameters.AddWithValue("@agent_ct", gAgentsInfo[(int)player.Index].AgentCT);
+            command.Parameters.AddWithValue("@agent_tt", gAgentsInfo[(int)player.Index].AgentTT);
+            if (Config.DebugEnabled) Console.WriteLine("QUERY: " + query);
             await command.ExecuteNonQueryAsync();
             connectionSQLITE?.Close();
         }
@@ -489,16 +437,14 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
     {
         try
         {
-            var agent_ct = gAgentsInfo[(int)player.Index].AgentCT;
-            if (agent_ct == null)
+            if (gAgentsInfo[(int)player.Index].AgentCT == null)
             {
-                agent_ct = "none";
+                gAgentsInfo[(int)player.Index].AgentCT = "none";
             }
 
-            var agent_tt = gAgentsInfo[(int)player.Index].AgentTT;
-            if (agent_tt == null)
+            if (gAgentsInfo[(int)player.Index].AgentTT == null)
             {
-                agent_tt = "none";
+                gAgentsInfo[(int)player.Index].AgentTT = "none";
             }
 
             await connectionSQLITE.OpenAsync();
@@ -507,9 +453,9 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
             var command = new SqliteCommand(query, connectionSQLITE);
 
             command.Parameters.AddWithValue("@steamid", player.SteamID);
-            command.Parameters.AddWithValue("@agent_ct", agent_ct);
-            command.Parameters.AddWithValue("@agent_tt", agent_tt);
-
+            command.Parameters.AddWithValue("@agent_ct", gAgentsInfo[(int)player.Index].AgentCT);
+            command.Parameters.AddWithValue("@agent_tt", gAgentsInfo[(int)player.Index].AgentTT);
+            if (Config.DebugEnabled) Console.WriteLine("QUERY: " + query);
             await command.ExecuteNonQueryAsync();
             connectionSQLITE?.Close();
         }
@@ -527,16 +473,14 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
     {
         try
         {
-            var agent_ct = gAgentsInfo[(int)player.Index].AgentCT;
-            if (agent_ct == null)
+            if (gAgentsInfo[(int)player.Index].AgentCT == null)
             {
-                agent_ct = "none";
+                gAgentsInfo[(int)player.Index].AgentCT = "none";
             }
 
-            var agent_tt = gAgentsInfo[(int)player.Index].AgentTT;
-            if (agent_tt == null)
+            if (gAgentsInfo[(int)player.Index].AgentTT == null)
             {
-                agent_tt = "none";
+                gAgentsInfo[(int)player.Index].AgentTT = "none";
             }
 
             await connectionMySQL.OpenAsync();
@@ -545,9 +489,9 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
             var command = new MySqlCommand(query, connectionMySQL);
 
             command.Parameters.AddWithValue("@steamid", player.SteamID);
-            command.Parameters.AddWithValue("@agent_ct", agent_ct);
-            command.Parameters.AddWithValue("@agent_tt", agent_tt);
-
+            command.Parameters.AddWithValue("@agent_ct", gAgentsInfo[(int)player.Index].AgentCT);
+            command.Parameters.AddWithValue("@agent_tt", gAgentsInfo[(int)player.Index].AgentTT);
+            if (Config.DebugEnabled) Console.WriteLine("QUERY: " + query);
 
             await command.ExecuteNonQueryAsync();
             connectionMySQL?.Close();
@@ -566,16 +510,14 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
     {
         try
         {
-            var agent_ct = gAgentsInfo[(int)player.Index].AgentCT;
-            if (agent_ct == null)
+            if (gAgentsInfo[(int)player.Index].AgentCT == null)
             {
-                agent_ct = "none";
+                gAgentsInfo[(int)player.Index].AgentCT = "none";
             }
 
-            var agent_tt = gAgentsInfo[(int)player.Index].AgentTT;
-            if (agent_tt == null)
+            if (gAgentsInfo[(int)player.Index].AgentTT == null)
             {
-                agent_tt = "none";
+                gAgentsInfo[(int)player.Index].AgentTT = "none";
             }
 
             await connectionMySQL.OpenAsync();
@@ -584,9 +526,9 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
             var command = new MySqlCommand(query, connectionMySQL);
 
             command.Parameters.AddWithValue("@steamid", player.SteamID);
-            command.Parameters.AddWithValue("@agent_ct", agent_ct);
-            command.Parameters.AddWithValue("@agent_tt", agent_tt);
-
+            command.Parameters.AddWithValue("@agent_ct", gAgentsInfo[(int)player.Index].AgentCT);
+            command.Parameters.AddWithValue("@agent_tt", gAgentsInfo[(int)player.Index].AgentTT);
+            if (Config.DebugEnabled) Console.WriteLine("QUERY: " + query);
             await command.ExecuteNonQueryAsync();
             connectionMySQL?.Close();
         }
@@ -610,6 +552,7 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
 
             var command = new SqliteCommand(query, connectionSQLITE);
             command.Parameters.AddWithValue("@steamid", player.SteamID);
+            if (Config.DebugEnabled) Console.WriteLine("QUERY: " + query);
             var reader = await command.ExecuteReaderAsync();
             if (await reader.ReadAsync())
             {
@@ -655,6 +598,7 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
 
             var command = new MySqlCommand(query, connectionMySQL);
             command.Parameters.AddWithValue("@steamid", player.SteamID);
+            if (Config.DebugEnabled) Console.WriteLine("QUERY: " + query);
             var reader = await command.ExecuteReaderAsync();
             if (await reader.ReadAsync())
             {
@@ -690,20 +634,22 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
         }
     }
 
-    private void playerRefresh(CCSPlayerController player)
+    private void playerRefresh(CCSPlayerController? player)
     {
-        string giveBack = "weapon_knife";
-        foreach (var weapon in player.PlayerPawn.Value.WeaponServices?.MyWeapons)
-        {
-            if (weapon is { IsValid: true, Value.IsValid: true } && (weapon.Value.DesignerName.Contains("knife") ||
-                weapon.Value.DesignerName.Contains("bayonet")))
-            {
-                giveBack = weapon.Value.DesignerName;
-                player.PlayerPawn.Value.RemovePlayerItem(weapon.Value);
-                break;
-            }
-        }
-        player.GiveNamedItem(giveBack);
+        if (!IsValidClient(player)) return;
+
+        AddTimer(0.18f, () => {
+            if (!IsValidClient(player)) return;
+            NativeAPI.IssueClientCommand((int)player.Index - 1, "slot3");
+        });
+        AddTimer(0.25f, () => {
+            if (!IsValidClient(player)) return;
+            NativeAPI.IssueClientCommand((int)player.Index - 1, "slot2");
+        });
+        AddTimer(0.38f, () => {
+            if (!IsValidClient(player)) return;
+            NativeAPI.IssueClientCommand((int)player.Index - 1, "slot1");
+        });
     }
 
     private bool IsValidClient(CCSPlayerController client, bool isAlive = true)
