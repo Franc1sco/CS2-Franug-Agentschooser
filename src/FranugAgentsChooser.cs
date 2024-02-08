@@ -42,7 +42,7 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
 {
     public override string ModuleName => "Franug Agents Chooser";
     public override string ModuleAuthor => "Franc1sco Franug";
-    public override string ModuleVersion => "0.0.5dev";
+    public override string ModuleVersion => "0.0.5fix";
     public ConfigGen Config { get; set; } = null!;
     public void OnConfigParsed(ConfigGen config) { Config = config; }
 
@@ -196,7 +196,7 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
             return;
         }
 
-        var menu = new CenterHtmlMenu("Agents Menu");
+        var menu = new ChatMenu("Agents Menu");
         if (Config.UsableTeam == 2 || Config.UsableTeam == 3)
         {
             menu.AddMenuOption("CT Agents", (player, option) => {
@@ -211,12 +211,12 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
             });
         }
 
-        MenuManager.OpenCenterHtmlMenu(this, player, menu);
+        MenuManager.OpenChatMenu(player, menu);
     }
 
     private void setupCTMenu(CCSPlayerController player)
     {
-        var menu = new CenterHtmlMenu("Agents Menu - CT");
+        var menu = new ChatMenu("Agents Menu - CT");
         menu.AddMenuOption("No agent model", (player, option) => {
 
             gAgentsInfo[(int)player.Index].AgentCT = "none";
@@ -237,12 +237,13 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
                 updatePlayer(player);
             });
         }
-        MenuManager.OpenCenterHtmlMenu(this, player, menu);
+        menu.PostSelectAction = PostSelectAction.Close;
+        MenuManager.OpenChatMenu(player, menu);
     }
 
     private void setupTTMenu(CCSPlayerController player)
     {
-        var menu = new CenterHtmlMenu("Agents Menu - TT");
+        var menu = new ChatMenu("Agents Menu - TT");
         menu.AddMenuOption("No agent model", (player, option) => {
 
             gAgentsInfo[(int)player.Index].AgentTT = "none";
@@ -263,7 +264,8 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
                 updatePlayer(player);
             });
         }
-        MenuManager.OpenCenterHtmlMenu(this, player, menu);
+        menu.PostSelectAction = PostSelectAction.Close;
+        MenuManager.OpenChatMenu(player, menu);
     }
 
     private HookResult eventPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
