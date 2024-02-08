@@ -4,7 +4,7 @@ Plugin for choose agents with !agents
 
 ### Requirements
 
-* [CounterStrikeSharp](https://github.com/roflmuffin/CounterStrikeSharp/) (version 154 or higher)
+* [CounterStrikeSharp](https://github.com/roflmuffin/CounterStrikeSharp/) (version 163 or higher)
 
 ### Installation
 
