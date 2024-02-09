@@ -42,7 +42,7 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
 {
     public override string ModuleName => "Franug Agents Chooser";
     public override string ModuleAuthor => "Franc1sco Franug";
-    public override string ModuleVersion => "0.0.5fix";
+    public override string ModuleVersion => "0.0.6dev";
     public ConfigGen Config { get; set; } = null!;
     public void OnConfigParsed(ConfigGen config) { Config = config; }
 
@@ -396,7 +396,13 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
 
     private bool RecordExists(CCSPlayerController player)
     {
-        return gAgentsInfo[(int)player.Index].AgentCT != null || gAgentsInfo[(int)player.Index].AgentTT != null;
+        if (Config.DebugEnabled)
+        {
+            Console.WriteLine(gAgentsInfo[(int)player.Index].AgentCT != null && gAgentsInfo[(int)player.Index].AgentTT != null);
+            Console.WriteLine("ct is " + gAgentsInfo[(int)player.Index].AgentCT + " t is " + gAgentsInfo[(int)player.Index].AgentTT);
+        }
+
+        return gAgentsInfo[(int)player.Index].AgentCT != null && gAgentsInfo[(int)player.Index].AgentTT != null;
     }
 
     public async Task InsertQueryDataSQLite(CCSPlayerController player)
