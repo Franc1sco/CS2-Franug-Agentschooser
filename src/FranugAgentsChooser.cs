@@ -10,6 +10,7 @@ using MySqlConnector;
 using Microsoft.Data.Sqlite;
 using System.Text.Json.Serialization;
 using CounterStrikeSharp.API.Modules.Timers;
+using CounterStrikeSharp.API.Modules.Entities;
 
 namespace FranugAgentsChooser;
 
@@ -43,7 +44,7 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
 {
     public override string ModuleName => "Franug Agents Chooser";
     public override string ModuleAuthor => "Franc1sco Franug";
-    public override string ModuleVersion => "0.0.8dev";
+    public override string ModuleVersion => "0.0.9dev";
     public ConfigGen Config { get; set; } = null!;
     public void OnConfigParsed(ConfigGen config) { Config = config; }
 
@@ -149,7 +150,7 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
             });
         }
 
-        RegisterEventHandler<EventPlayerConnect>((@event, info) =>
+        RegisterEventHandler<EventPlayerConnectFull>((@event, info) =>
         {
             var player = @event.Userid;
 
@@ -198,7 +199,7 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
     {
         Utilities.GetPlayers().ForEach(player =>
         {
-            if (IsValidClient(player) && gAgentsInfo.ContainsKey((int)player.Index) && !bNeedAgent[(int)player.Index])
+            if (IsValidClient(player) && !bNeedAgent[(int)player.Index])
             {
                 if (Config.DebugEnabled)
                 {
@@ -741,7 +742,7 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
 
     private bool IsValidClient(CCSPlayerController client, bool isAlive = true)
     {
-        return client != null && client.IsValid && client.PlayerPawn != null && client.PlayerPawn.IsValid && (!isAlive || client.PawnIsAlive) && !client.IsBot;
+        return client != null && client.IsValid && client.PlayerPawn != null && client.PlayerPawn.IsValid && gAgentsInfo.ContainsKey((int)client.Index) && (!isAlive || client.PawnIsAlive) && !client.IsBot;
     }
 }
 
