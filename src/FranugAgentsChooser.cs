@@ -42,13 +42,14 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
 {
     public override string ModuleName => "Franug Agents Chooser";
     public override string ModuleAuthor => "Franc1sco Franug";
-    public override string ModuleVersion => "0.0.5fix";
+    public override string ModuleVersion => "0.0.7dev";
     public ConfigGen Config { get; set; } = null!;
     public void OnConfigParsed(ConfigGen config) { Config = config; }
 
     private SqliteConnection? connectionSQLITE = null;
     internal static MySqlConnection? connectionMySQL = null;
     internal static Dictionary<int, AgentsInfo> gAgentsInfo = new Dictionary<int, AgentsInfo>();
+    private readonly Dictionary<int?, bool> bNeedAgent = new();
 
     internal static readonly Dictionary<string, string> agentsListCT = new()
     {
@@ -138,6 +139,7 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
         {
             Utilities.GetPlayers().ForEach(player =>
             {
+                bNeedAgent.Add(player.UserId, true);
                 getPlayerData(player);
             });
         }
@@ -153,6 +155,7 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
             }
             else
             {
+                bNeedAgent.Add(player.UserId, true);
                 getPlayerData(player);
                 return HookResult.Continue;
             }
@@ -173,13 +176,62 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
                 {
                     gAgentsInfo.Remove((int)player.Index);
                 }
+                if (bNeedAgent.ContainsKey(player.UserId))
+                {
+                    bNeedAgent.Remove(player.UserId);
+                }
                 return HookResult.Continue;
             }
         });
 
         RegisterEventHandler<EventPlayerSpawn>(eventPlayerSpawn);
+        RegisterEventHandler<EventRoundStart>(eventRoundStart);
+        RegisterEventHandler<EventPlayerTeam>(OnPlayerTeam);
     }
 
+    private HookResult eventPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
+    {
+        if (Config.DebugEnabled)
+        {
+            Console.WriteLine("Spawn event");
+        }
+
+        var player = @event.Userid;
+        bNeedAgent[player.UserId] = true;
+        applyAgent(player);
+
+        return HookResult.Continue;
+    }
+
+    private HookResult OnPlayerTeam(EventPlayerTeam @event, GameEventInfo info)
+    {
+        if (Config.DebugEnabled)
+        {
+            Console.WriteLine("Team event");
+        }
+
+        var player = @event.Userid;
+        bNeedAgent[player.UserId] = true;
+        applyAgent(player);
+
+        return HookResult.Continue;
+    }
+
+    private HookResult eventRoundStart(EventRoundStart @event, GameEventInfo info)
+    {
+        if (Config.DebugEnabled)
+        {
+            Console.WriteLine("Round Start event");
+        }
+
+        Utilities.GetPlayers().ForEach(player =>
+        {
+            bNeedAgent[player.UserId] = true;
+            applyAgent(player);
+        });
+
+        return HookResult.Continue;
+    }
 
     [ConsoleCommand("css_agents", "Select Agents model.")]
     [CommandHelper(minArgs: 0, usage: "", whoCanExecute: CommandUsage.CLIENT_ONLY)]
@@ -266,45 +318,6 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
         }
         menu.PostSelectAction = PostSelectAction.Close;
         MenuManager.OpenChatMenu(player, menu);
-    }
-
-    private HookResult eventPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
-    {
-        var player = @event.Userid;
-
-        if (!IsValidClient(player))
-        {
-            return HookResult.Continue;
-
-        }
-
-        AddTimer(2.5f, () =>
-        {
-            if (!IsValidClient(player))
-            {
-                return;
-            }
-
-            if ((CsTeam)player.TeamNum == CsTeam.CounterTerrorist) {
-
-                var agent_ct = gAgentsInfo[(int)player.Index].AgentCT;
-                if (agent_ct != null && !agent_ct.Equals("none"))
-                {
-                    player.PlayerPawn.Value.SetModel(agent_ct);
-                }
-            }
-            else if ((CsTeam)player.TeamNum == CsTeam.Terrorist)
-            {
-
-                var agent_tt = gAgentsInfo[(int)player.Index].AgentTT;
-                if (agent_tt != null && !agent_tt.Equals("none"))
-                {
-                    player.PlayerPawn.Value.SetModel(agent_tt);
-                }
-            }
-        });
-        
-        return HookResult.Continue;
     }
 
     private void createDB()
@@ -396,7 +409,13 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
 
     private bool RecordExists(CCSPlayerController player)
     {
-        return gAgentsInfo[(int)player.Index].AgentCT != null || gAgentsInfo[(int)player.Index].AgentTT != null;
+        if (Config.DebugEnabled)
+        {
+            Console.WriteLine(gAgentsInfo[(int)player.Index].AgentCT != null && gAgentsInfo[(int)player.Index].AgentTT != null);
+            Console.WriteLine("ct is " + gAgentsInfo[(int)player.Index].AgentCT + " t is " + gAgentsInfo[(int)player.Index].AgentTT);
+        }
+
+        return gAgentsInfo[(int)player.Index].AgentCT != null && gAgentsInfo[(int)player.Index].AgentTT != null;
     }
 
     public async Task InsertQueryDataSQLite(CCSPlayerController player)
@@ -614,6 +633,8 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
                 };
 
                 gAgentsInfo[(int)player.Index] = agentsInfo;
+
+                applyAgent(player);
             }
             else
             {
@@ -634,6 +655,49 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
         {
             await connectionMySQL?.CloseAsync();
         }
+    }
+
+    private void applyAgent(CCSPlayerController? player)
+    {
+        if (!IsValidClient(player))
+        {
+            return;
+
+        }
+
+        AddTimer(2.5f, () =>
+        {
+            if (!IsValidClient(player))
+            {
+                return;
+            }
+
+            if (!bNeedAgent[player.UserId])
+            {
+                return;
+            }
+
+            bNeedAgent[player.UserId] = false;
+
+            if ((CsTeam)player.TeamNum == CsTeam.CounterTerrorist)
+            {
+
+                var agent_ct = gAgentsInfo[(int)player.Index].AgentCT;
+                if (agent_ct != null && !agent_ct.Equals("none"))
+                {
+                    player.PlayerPawn.Value.SetModel(agent_ct);
+                }
+            }
+            else if ((CsTeam)player.TeamNum == CsTeam.Terrorist)
+            {
+
+                var agent_tt = gAgentsInfo[(int)player.Index].AgentTT;
+                if (agent_tt != null && !agent_tt.Equals("none"))
+                {
+                    player.PlayerPawn.Value.SetModel(agent_tt);
+                }
+            }
+        });
     }
 
     private void playerRefresh(CCSPlayerController? player)
