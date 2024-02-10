@@ -9,6 +9,7 @@ using CounterStrikeSharp.API.Modules.Admin;
 using MySqlConnector;
 using Microsoft.Data.Sqlite;
 using System.Text.Json.Serialization;
+using CounterStrikeSharp.API.Modules.Timers;
 
 namespace FranugAgentsChooser;
 
@@ -42,7 +43,7 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
 {
     public override string ModuleName => "Franug Agents Chooser";
     public override string ModuleAuthor => "Franc1sco Franug";
-    public override string ModuleVersion => "0.0.7dev";
+    public override string ModuleVersion => "0.0.8dev";
     public ConfigGen Config { get; set; } = null!;
     public void OnConfigParsed(ConfigGen config) { Config = config; }
 
@@ -135,16 +136,20 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
     public override void Load(bool hotReload)
     {
         createDB();
+        AddTimer(5.0f, TimerCheckModel, TimerFlags.REPEAT);
         if (hotReload)
         {
             Utilities.GetPlayers().ForEach(player =>
             {
-                bNeedAgent.Add(player.UserId, true);
-                getPlayerData(player);
+                if (!player.IsBot)
+                {
+                    bNeedAgent.Add((int)player.Index, true);
+                    getPlayerData(player);
+                }
             });
         }
 
-        RegisterEventHandler<EventPlayerConnectFull>((@event, info) =>
+        RegisterEventHandler<EventPlayerConnect>((@event, info) =>
         {
             var player = @event.Userid;
 
@@ -155,7 +160,7 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
             }
             else
             {
-                bNeedAgent.Add(player.UserId, true);
+                bNeedAgent.Add((int)player.Index, true);
                 getPlayerData(player);
                 return HookResult.Continue;
             }
@@ -176,9 +181,9 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
                 {
                     gAgentsInfo.Remove((int)player.Index);
                 }
-                if (bNeedAgent.ContainsKey(player.UserId))
+                if (bNeedAgent.ContainsKey((int)player.Index))
                 {
-                    bNeedAgent.Remove(player.UserId);
+                    bNeedAgent.Remove((int)player.Index);
                 }
                 return HookResult.Continue;
             }
@@ -189,6 +194,21 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
         RegisterEventHandler<EventPlayerTeam>(OnPlayerTeam);
     }
 
+    private void TimerCheckModel()
+    {
+        Utilities.GetPlayers().ForEach(player =>
+        {
+            if (IsValidClient(player) && gAgentsInfo.ContainsKey((int)player.Index) && !bNeedAgent[(int)player.Index])
+            {
+                if (Config.DebugEnabled)
+                {
+                    Console.WriteLine("Timer event");
+                }
+                applyAgent(player);
+            }
+        });
+    }
+
     private HookResult eventPlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
     {
         if (Config.DebugEnabled)
@@ -197,7 +217,6 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
         }
 
         var player = @event.Userid;
-        bNeedAgent[player.UserId] = true;
         applyAgent(player);
 
         return HookResult.Continue;
@@ -211,7 +230,6 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
         }
 
         var player = @event.Userid;
-        bNeedAgent[player.UserId] = true;
         applyAgent(player);
 
         return HookResult.Continue;
@@ -226,7 +244,6 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
 
         Utilities.GetPlayers().ForEach(player =>
         {
-            bNeedAgent[player.UserId] = true;
             applyAgent(player);
         });
 
@@ -587,6 +604,8 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
                 };
 
                 gAgentsInfo[(int)player.Index] = agentsInfo;
+
+                applyAgent(player);
             } 
             else
             {
@@ -665,6 +684,8 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
 
         }
 
+        bNeedAgent[(int)player.Index] = true;
+
         AddTimer(2.5f, () =>
         {
             if (!IsValidClient(player))
@@ -672,12 +693,12 @@ public class FranugAgentsChooser : BasePlugin, IPluginConfig<ConfigGen>
                 return;
             }
 
-            if (!bNeedAgent[player.UserId])
+            if (!bNeedAgent[(int)player.Index])
             {
                 return;
             }
 
-            bNeedAgent[player.UserId] = false;
+            bNeedAgent[(int)player.Index] = false;
 
             if ((CsTeam)player.TeamNum == CsTeam.CounterTerrorist)
             {
